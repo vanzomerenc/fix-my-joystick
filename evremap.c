@@ -27,7 +27,7 @@
         return last_error; }} while (0)
 
 
-static char const **add_arg(size_t *, char const ***);
+static char const **add_arg(int *, char const ***);
 
 
 struct mapping
@@ -37,7 +37,7 @@ struct mapping
     unsigned short virt_code;
 };
 
-static struct mapping *add_mapping(size_t *, struct mapping **);
+static struct mapping *add_mapping(int *, struct mapping **);
 static int parse_mapping(char const *, struct mapping *);
 static void log_mapping(struct mapping const *);
 
@@ -61,9 +61,9 @@ struct old_absinfo
     struct input_absinfo info;
 };
 
-static struct old_absinfo *add_old_absinfo(size_t *, struct old_absinfo **);
+static struct old_absinfo *add_old_absinfo(int *, struct old_absinfo **);
 
-static size_t n_absinfo_to_restore = 0;
+static int n_absinfo_to_restore = 0;
 static struct old_absinfo *absinfo_to_restore = NULL;
 
 
@@ -101,7 +101,7 @@ main(int argc, char **argv)
     char const *virt_dev_name = "An Unnammed Virtual Device";
 
     char const **mapping_args = NULL;
-    size_t n_mapping_args = 0;
+    int n_mapping_args = 0;
 
     int opt;
     while ((opt = getopt(argc, argv, "hn:")) != -1)
@@ -129,7 +129,7 @@ main(int argc, char **argv)
     // Parse mappings //
 
     struct mapping *mapped = NULL;
-    size_t n_mapped = 0;
+    int n_mapped = 0;
 
     for (int i = 0; i < n_mapping_args; i++)
     {
@@ -223,13 +223,13 @@ main(int argc, char **argv)
     return &(*items)[*n - 1]
 
 static char const **
-add_arg(size_t *n, char const ***args) { ADD(n, args); }
+add_arg(int *n, char const ***args) { ADD(n, args); }
 
 static struct mapping *
-add_mapping(size_t *n, struct mapping **mapped) { ADD(n, mapped); }
+add_mapping(int *n, struct mapping **mapped) { ADD(n, mapped); }
 
 static struct old_absinfo *
-add_old_absinfo(size_t *n, struct old_absinfo **items) { ADD(n, items); }
+add_old_absinfo(int *n, struct old_absinfo **items) { ADD(n, items); }
 
 
 static int
@@ -263,7 +263,7 @@ static void
 log_mapping(struct mapping const *mapping)
 {
     log(
-        "Added event mapping type: %6s (%#4hd) code: %12s (%#4hd) from: %12s (%#4hd) on the real device.",
+        "Added event mapping type: %6s (%4hd) code: %12s (%4hd) from: %12s (%4hd) on the real device.",
         libevdev_event_type_get_name(mapping->type),
         mapping->type,
         libevdev_event_code_get_name(mapping->type, mapping->virt_code),
