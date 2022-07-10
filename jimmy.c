@@ -263,7 +263,7 @@ static void
 log_mapping(struct mapping const *mapping)
 {
     log(
-        "Added event mapping type: %6s (%#6hx) code: %12s (%#6hx) from: %12s (%#6hx) on the real device.",
+        "Added event mapping type: %6s (%#4hd) code: %12s (%#4hd) from: %12s (%#4hd) on the real device.",
         libevdev_event_type_get_name(mapping->type),
         mapping->type,
         libevdev_event_code_get_name(mapping->type, mapping->virt_code),
@@ -300,6 +300,6 @@ global_cleanup(void)
             restore->device,
             restore->code,
             &restore->info);
-        if (last_error != 0) log("Failed to restore axis settings for axis %hx", restore->code);
+        if (last_error != 0) log("Failed to restore axis settings for axis %hd", restore->code);
     }
 }
