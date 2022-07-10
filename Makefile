@@ -10,13 +10,12 @@ PROGRAMS = evremap
 
 all: $(PROGRAMS)
 
-evremap: override CFLAGS += $(shell $(PKG_CONFIG) --libs --cflags libevdev)
-evremap: evremap.c
-> $(CC) $(CFLAGS) -c $< -o $@
+evremap: override CFLAGS += $(shell $(PKG_CONFIG) --cflags libevdev)
+evremap: override LDLIBS += $(shell $(PKG_CONFIG) --libs libevdev)
 
-install: 
+install: $(PROGRAMS)
 > install -d $(DESTDIR)$(PREFIX)/bin
 > install $(PROGRAMS) $(DESTDIR)$(PREFIX)/bin
 
 clean distclean:
-> rm evremap
+> $(RM) *.o $(PROGRAMS)
