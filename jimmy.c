@@ -166,7 +166,8 @@ parse_mapping(char const *text, struct mapping *mapping)
     int status = 0;
     char *code_name = calloc(strlen(text), 1);
     unsigned short real_code;
-    int n_parsed = sscanf(text, "%[a-zA-Z-0-9_]=%hi", code_name, &real_code);
+    char discard;
+    int n_parsed = sscanf(text, "%[a-zA-Z-0-9_]=%hi%c", code_name, &real_code, &discard);
     int type = libevdev_event_type_from_code_name(code_name);
     int virt_code = libevdev_event_code_from_code_name(code_name);
     
