@@ -7,38 +7,177 @@
 #include <libevdev/libevdev-uinput.h>
 
 
-#define DIE_ON_ERROR(x) do { \
-    int LAST_ERROR = x; \
-    if (LAST_ERROR != 0) { \
-        fprintf(stderr, "error %d on line %d: %s\n", LAST_ERROR, __LINE__, #x); \
-        return EXIT_FAILURE; }} while (0)
+#define log(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 
+#define DIE(fmt, ...) do { \
+    log("%s: " fmt, argv[0], ##__VA_ARGS__); \
+    return EXIT_FAILURE; } while (0)
 
-struct virtual_event_info
+#define DIE_WITH_USAGE(fmt, ...) do { \
+    log("%s: " fmt, argv[0], ##__VA_ARGS__); \
+    log("Usage: %s [-n virt_dev_name] [-u virt_btn=real_btn]... /dev/input/device-to-wrap", argv[0]); \
+    return EXIT_FAILURE; } while (0)
+
+#define DIE_ON_ERROR(expr, fmt, ...) do { \
+    int last_error = expr; \
+    if (last_error != 0) { \
+        log("%s: " fmt " (error %d)", argv[0], ##__VA_ARGS__, last_error); \
+        return last_error; }} while (0)
+
+struct mapping
 {
     unsigned short type;
-    unsigned short physical_code;
-    unsigned short virtual_code;
+    unsigned short real_code;
+    unsigned short virt_code;
 };
 
-static int parse_event_info(char *text, struct virtual_event_info *info)
+static char const **add_arg(size_t *, char const ***);
+
+static struct mapping *add_mapping(size_t *, struct mapping **);
+static int parse_mapping(char const *, struct mapping *);
+static void log_mapping(struct mapping const *);
+
+
+int main(int argc, char **argv)
+{
+    // Parse arguments //
+
+    opterr = 0;
+
+    char const *real_dev_path = "";
+    char const *virt_dev_name = "An Unnammed Virtual Device";
+
+    char const **mapping_args = NULL;
+    size_t n_mapping_args = 0;
+
+    int opt;
+    while ((opt = getopt(argc, argv, "hn:u:")) != -1)
+    {
+        switch (opt)
+        {
+        case 'n':
+            virt_dev_name = optarg;
+            break;
+        case 'u':
+            *add_arg(&n_mapping_args, &mapping_args) = optarg;
+            break;
+        case 'h':
+            DIE_WITH_USAGE("Called with option '-h'. Printing help.");
+        default:
+            DIE_WITH_USAGE("Unrecognized option '-%c'.", optopt);
+        }
+    }
+    if (optind >= argc) DIE_WITH_USAGE("Real device path was not specified.");
+    real_dev_path = argv[optind++];
+    if (optind < argc) DIE_WITH_USAGE("Extra argument '%s'.", argv[optind]);
+
+
+    // Parse mappings //
+
+    struct mapping *mapped = NULL;
+    size_t n_mapped = 0;
+
+    for (int i = 0; i < n_mapping_args; i++)
+    {
+        struct mapping *added = add_mapping(&n_mapped, &mapped);
+        if (parse_mapping(mapping_args[i], added) != 0)
+        {
+            DIE("Could not parse mapping '%s'.", mapping_args[i]);
+        }
+        log_mapping(added);
+    }
+
+
+    // Initialize wrapped device //
+
+    int real_dev_fd = open(real_dev_path, O_RDONLY | O_NONBLOCK);
+    if (real_dev_fd < 0) DIE_ON_ERROR(real_dev_fd, "Failed to open real device.");
+    struct libevdev *real_dev;
+    DIE_ON_ERROR(libevdev_new_from_fd(real_dev_fd, &real_dev), "Failed to initialize real device after opening.");
+    DIE_ON_ERROR(libevdev_grab(real_dev, LIBEVDEV_GRAB), "Failed to grab real device after opening.");
+    log("Grabbed real device '%s'.", real_dev_path);
+
+
+    // Initialize uinput device //
+
+    struct libevdev *virt_dev_proto = libevdev_new();
+    libevdev_set_name(virt_dev_proto, virt_dev_name);
+    
+    for (int i = 0; i < n_mapped; i++)
+    {
+        struct input_absinfo const *absinfo = libevdev_get_abs_info(real_dev, mapped[i].real_code);
+        libevdev_enable_event_type(virt_dev_proto, mapped[i].type);
+        libevdev_enable_event_code(virt_dev_proto, mapped[i].type, mapped[i].virt_code, absinfo);
+    }
+
+    struct libevdev_uinput *virt_dev;
+    DIE_ON_ERROR(libevdev_uinput_create_from_device(
+        virt_dev_proto, LIBEVDEV_UINPUT_OPEN_MANAGED, &virt_dev), "Failed to create uinput device.");
+    log("Created uinput device '%s'.", libevdev_uinput_get_devnode(virt_dev));
+
+
+    // Process events //
+    
+    log("Listening for events...");
+    for (;;)
+    {
+        if (libevdev_has_event_pending(real_dev))
+        {
+            struct input_event e;
+            int read_status = libevdev_next_event(real_dev, LIBEVDEV_READ_FLAG_NORMAL, &e);
+            if (read_status < 0) DIE_ON_ERROR(read_status, "Error reading event from real device.");
+
+            if (e.type == EV_SYN) libevdev_uinput_write_event(virt_dev, e.type, e.code, e.value);
+            else for (int i = 0; i < n_mapped; i++)
+            {
+                if (e.type == mapped[i].type && e.code == mapped[i].real_code)
+                {
+                    libevdev_uinput_write_event(virt_dev, mapped[i].type, mapped[i].virt_code, e.value);
+                }
+            }
+        }
+    }
+}
+
+
+
+static char const **
+add_arg(size_t *n, char const ***args)
+{
+    *n += 1;
+    *args = reallocarray(*args, *n, sizeof(char const *));
+    return &(*args)[*n - 1];
+}
+
+
+static struct mapping *
+add_mapping(size_t *n, struct mapping **mapped)
+{
+    *n += 1;
+    *mapped = reallocarray(*mapped, *n, sizeof(struct mapping));
+    return &(*mapped)[*n - 1];
+}
+
+
+static int
+parse_mapping(char const *text, struct mapping *mapping)
 {
     int status = 0;
     char *code_name = calloc(strlen(text), 1);
-    unsigned short physical_code;
-    int n_parsed = sscanf(text, "%[a-zA-Z-0-9_]=%hd", code_name, &physical_code);
+    unsigned short real_code;
+    int n_parsed = sscanf(text, "%[a-zA-Z-0-9_]=%hd", code_name, &real_code);
     int type = libevdev_event_type_from_code_name(code_name);
-    int virtual_code = libevdev_event_code_from_code_name(code_name);
+    int virt_code = libevdev_event_code_from_code_name(code_name);
     
-    if (n_parsed != 2 || type < 0 || virtual_code < 0)
+    if (n_parsed != 2 || type < 0 || virt_code < 0)
     {
         status = -1;
         goto cleanup;
     }
 
-    info->type = type;
-    info->physical_code = physical_code;
-    info->virtual_code = virtual_code;
+    mapping->type = type;
+    mapping->real_code = real_code;
+    mapping->virt_code = virt_code;
     
 cleanup:
     free(code_name);
@@ -46,99 +185,15 @@ cleanup:
 }
 
 
-int main(int argc, char **argv)
+static void
+log_mapping(struct mapping const *mapping)
 {
-    char const *real_dev = "";
-    char const *virt_dev = "Virtual_Joystick";
-
-    struct virtual_event_info *virtual_events = NULL;
-    size_t n_virtual_events = 0;
-
-    int opt;
-    while ((opt = getopt(argc, argv, "n:u:")) != -1)
-    {
-        switch (opt)
-        {
-        case 'n':
-            virt_dev = optarg;
-            break;
-        case 'u':
-            n_virtual_events += 1;
-            virtual_events = realloc(virtual_events, sizeof(struct virtual_event_info) * n_virtual_events);
-            struct virtual_event_info *added_event = &virtual_events[n_virtual_events - 1];
-            DIE_ON_ERROR(parse_event_info(optarg, added_event));
-            fprintf(stderr,
-                "Added event type: %6s (%#6hx) code: %12s (%#6hx) from: %12s (%#6hx) on the real device.\n",
-                libevdev_event_type_get_name(added_event->type),
-                added_event->type,
-                libevdev_event_code_get_name(added_event->type, added_event->virtual_code),
-                added_event->virtual_code,
-                libevdev_event_code_get_name(added_event->type, added_event->physical_code),
-                added_event->physical_code);
-            break;
-        default:
-            fprintf(stderr, "Usage: %s [-n virt_dev] [-u virt_btn=real_btn] real_dev\n", argv[0]);
-            return EXIT_FAILURE;
-        }
-    }
-    real_dev = argv[optind];
-
-
-
-    int device_fd = open(real_dev, O_RDONLY | O_NONBLOCK);
-    if (device_fd < 0) DIE_ON_ERROR(device_fd);
-    struct libevdev *device;
-    DIE_ON_ERROR(libevdev_new_from_fd(device_fd, &device));
-    DIE_ON_ERROR(libevdev_grab(device, LIBEVDEV_GRAB));
-
-    struct libevdev *virtual_device_prototype = libevdev_new();
-    libevdev_set_name(virtual_device_prototype, virt_dev);
-    
-    for (int i = 0; i < n_virtual_events; i++)
-    {
-        struct virtual_event_info const *info = &virtual_events[i];
-        struct input_absinfo const *absinfo = NULL;
-        if (info->type == EV_ABS)
-        {
-            absinfo = libevdev_get_abs_info(device, info->physical_code);
-        }
-
-        libevdev_enable_event_type(virtual_device_prototype, info->type);
-        libevdev_enable_event_code(virtual_device_prototype, info->type, info->virtual_code, absinfo);
-    }
-
-    struct libevdev_uinput *virtual_device;
-    DIE_ON_ERROR(libevdev_uinput_create_from_device(
-        virtual_device_prototype,
-        LIBEVDEV_UINPUT_OPEN_MANAGED,
-        &virtual_device));
-    
-    for (;;)
-    {
-        if (libevdev_has_event_pending(device))
-        {
-            struct input_event e;
-            int read_status = libevdev_next_event(device, LIBEVDEV_READ_FLAG_NORMAL, &e);
-            if (read_status < 0) DIE_ON_ERROR(read_status);
-
-            fprintf(
-                stderr,
-                "type: %6s (%#6hx) code: %12s (%#6hx) value: %10d\n",
-                libevdev_event_type_get_name(e.type),
-                e.type,
-                libevdev_event_code_get_name(e.type, e.code),
-                e.code,
-                e.value);
-
-            if (e.type == EV_SYN) libevdev_uinput_write_event(virtual_device, e.type, e.code, e.value);
-            for (int i = 0; i < n_virtual_events; i++)
-            {
-                struct virtual_event_info const *info = &virtual_events[i];
-                if (e.type == info->type && e.code == info->physical_code)
-                {
-                    libevdev_uinput_write_event(virtual_device, info->type, info->virtual_code, e.value);
-                }
-            }
-        }
-    }
+    log(
+        "Added event mapping type: %6s (%#6hx) code: %12s (%#6hx) from: %12s (%#6hx) on the real device.",
+        libevdev_event_type_get_name(mapping->type),
+        mapping->type,
+        libevdev_event_code_get_name(mapping->type, mapping->virt_code),
+        mapping->virt_code,
+        libevdev_event_code_get_name(mapping->type, mapping->real_code),
+        mapping->real_code);
 }
