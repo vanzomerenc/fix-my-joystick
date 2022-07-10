@@ -15,7 +15,7 @@
 
 #define DIE_WITH_USAGE(fmt, ...) do { \
     log("%s: " fmt, argv[0], ##__VA_ARGS__); \
-    log("Usage: %s [-n virt_dev_name] [-u virt_btn=real_btn]... /dev/input/device-to-wrap", argv[0]); \
+    log("Usage: %s [-n virt_dev_name] /dev/input/device-to-wrap [virt_btn=real_btn]...", argv[0]); \
     return EXIT_FAILURE; } while (0)
 
 #define DIE_ON_ERROR(expr, fmt, ...) do { \
@@ -51,15 +51,12 @@ int main(int argc, char **argv)
     size_t n_mapping_args = 0;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hn:u:")) != -1)
+    while ((opt = getopt(argc, argv, "hn:")) != -1)
     {
         switch (opt)
         {
         case 'n':
             virt_dev_name = optarg;
-            break;
-        case 'u':
-            *add_arg(&n_mapping_args, &mapping_args) = optarg;
             break;
         case 'h':
             DIE_WITH_USAGE("Called with option '-h'. Printing help.");
@@ -69,7 +66,11 @@ int main(int argc, char **argv)
     }
     if (optind >= argc) DIE_WITH_USAGE("Real device path was not specified.");
     real_dev_path = argv[optind++];
-    if (optind < argc) DIE_WITH_USAGE("Extra argument '%s'.", argv[optind]);
+    
+    for (int i = optind; i < argc; i++)
+    {
+        *add_arg(&n_mapping_args, &mapping_args) = argv[i];
+    }
 
 
     // Parse mappings //
@@ -82,7 +83,7 @@ int main(int argc, char **argv)
         struct mapping *added = add_mapping(&n_mapped, &mapped);
         if (parse_mapping(mapping_args[i], added) != 0)
         {
-            DIE("Could not parse mapping '%s'.", mapping_args[i]);
+            DIE_WITH_USAGE("Could not parse mapping '%s'.", mapping_args[i]);
         }
         log_mapping(added);
     }
