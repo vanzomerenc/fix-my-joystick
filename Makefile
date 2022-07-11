@@ -1,6 +1,6 @@
 SHELL = /bin/sh
 .RECIPEPREFIX = >
-.PHONY: all install dist clean distclean
+.PHONY: all install uninstall dist clean distclean
 
 VERSION := 0.1
 PACKAGE := evremap-$(VERSION)
@@ -19,6 +19,9 @@ evremap: override LDLIBS += $(shell pkg-config --libs libevdev)
 install: $(PROGRAMS)
 > install -d $(DESTDIR)$(PREFIX)/bin
 > install $(PROGRAMS) $(DESTDIR)$(PREFIX)/bin
+
+uninstall:
+> rm -f $(foreach PROGRAM, $(PROGRAMS), $(DESTDIR)$(PREFIX)/bin/$(PROGRAM))
 
 dist: $(DIST)
 > rm -rf $(PACKAGE)
