@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -42,6 +43,7 @@ static int parse_mapping(char const *, struct mapping *);
 static void log_mapping(struct mapping const *);
 
 
+static void on_sighup();
 static void on_fatal_signal(int);
 static void global_cleanup(void);
 
@@ -67,6 +69,12 @@ static int n_absinfo_to_restore = 0;
 static struct old_absinfo *absinfo_to_restore = NULL;
 
 
+// If we're running as a daemon, there are a few things we should do differently.
+// These are:
+// * SIGHUP means something completely different. In a regular program, it means
+//   we lost connection to a terminal and should probably exit. If we're running
+//   as a daemon, it means we should reload our configuration.
+static bool is_daemon = false;
 
 
 int
@@ -89,7 +97,7 @@ main(int argc, char **argv)
 
     signal(SIGINT, &on_fatal_signal);
     signal(SIGTERM, &on_fatal_signal);
-    signal(SIGHUP, &on_fatal_signal);
+    signal(SIGHUP, &on_sighup);
     atexit(&global_cleanup);
 
 
@@ -108,6 +116,9 @@ main(int argc, char **argv)
     {
         switch (opt)
         {
+        case 'd':
+            is_daemon = 1;
+            break;
         case 'n':
             virt_dev_name = optarg;
             break;
@@ -270,6 +281,19 @@ log_mapping(struct mapping const *mapping)
         mapping->virt_code,
         libevdev_event_code_get_name(mapping->type, mapping->real_code),
         mapping->real_code);
+}
+
+
+static void
+on_sighup(int sig)
+{
+    if (!is_daemon)
+    {
+        on_fatal_signal(sig);
+        return;
+    }
+
+    // TODO: something probably involving sig_atomic_t. This does not matter until we have configuration.
 }
 
 
